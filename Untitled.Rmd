@@ -1,0 +1,183 @@
+---
+title: "LandingDistancePrediction"
+author: "Swapnil"
+date: "1/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE,echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Prediction of the landing distance of the Aircrafts
+
+The purpose of this project is to predict the landing distance of the aircrafts based on different details. There have been many major mishaps during the landing of the aircraft, resulting in the loss of many lives. The data used in this project can be found **[here.]()**
+
+Information about various parameters such as, pitch, ground speed, air speed, height etc. of **Airbus** and **Boeing** aircrafts is given for the study.
+
+We have to come up with a robust regression model that can predict the landing distance.
+
+## Packages Required 
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(GGally)
+library(leaps)
+library(gridExtra)
+library(plotly)
+library(mvinfluence)
+library(ggthemes)
+```
+
+## Loading and cleaning the data
+
+The data is stored in two excel sheets called FAA1 and FAA2 respectively. We need to load these sheets, analyse the data for completeness and then combine the two datasets into one.
+
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+faa1<-read_xls('FAA1.xls')
+faa2<-read_xls('FAA2.xls')
+str(faa1)
+str(faa2)
+```
+
+We can observe that the column *duration* is missing from FAA2 dataset. We need to introduce this column in order to merge two dataframes. We also check if we have any duplicate records in the combined dataframe.
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+# the column 'duration' is missing from faa2 dataframe
+faa2$duration<-NA
+# Now, we can concatinate the two dataframes
+faa<-rbind(faa1,faa2)
+str(faa)
+# Removing duplicates from the dataframe
+dim(unique(faa))
+```
+## Removing outliers-
+ 
+ We have been given following information to decide whether an observation is an outlier or not:
+ 
+* The duration of a normal flight should always be greater than 40 min. 
+* If Speed_ground is less than 30MPH or greater than 140MPH, then the landing would be considered as abnormal.
+* If Speed_air is less than 30MPH or greater than 140MPH, then the landing would be considered as abnormal.
+* The landing aircraft is required to be at least 6 meters high at the threshold of the runway. 
+* Landing distance should be less than 6000 feet
+
+Based on this information, we clean the dataset.
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+faa<-faa%>%filter(duration>40,speed_ground >= 30, speed_ground <=140,speed_air >= 30, speed_air <=140,height >=6,distance<6000)
+summary(faa)
+```
+
+Once the data is cleaned, we sample 80% of the observation for training the regression model and the rest 20% for testing the model-
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+rows<-sample(195,0.8*195,replace = FALSE)
+train<-faa[rows,]
+test<-faa[-rows,]
+
+# checking the correlation among variables
+ggpairs(train) 
+```
+
+Since the dataset is small, we can use best subset selection for variable selection. Best subset selection algorithm will look for best subset of predictors that closely relate with the response variable. This method may not be best suited when the number of variables are too large.
+
+We will use-
+
+* Adjusted R Squared
+* CP
+* BIC
+
+As creterion for selecting the best subset of predictors for our linear model.
+
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+#Best subset variable selection
+best.subset<-regsubsets(distance~.,data = train,nvmax = 7)
+best.subset.summary <- summary(best.subset)
+
+# Now, we will use different criterion to select the best subset of the predictors for our problem
+# 1. Adjused R squared
+p1<-ggplot(data = NULL,aes(x=1:7,y = best.subset.summary$adjr2))+geom_line(color='white')+labs(x='Index',y='Adjusted R Squared',title='Adjusted R Squared')+
+  theme_hc(bgcolor = "darkunica")
+
+# 2. CP
+p2<-ggplot(data = NULL,aes(x=1:7,y = best.subset.summary$cp))+geom_line(color='white')+labs(x='Index',y='CP',title='CP')+
+  theme_hc(bgcolor = "darkunica")
+
+# 3. BIC
+p3<-ggplot(data = NULL,aes(x=1:7,y = best.subset.summary$bic))+geom_line(color='white')+labs(x='Index',y='BIC',title='BIC')+
+  theme_hc(bgcolor = "darkunica")
+
+grid.arrange(p1,p2,p3)
+```
+
+From above graphs, it is visible that-
+
+* Adjusted R Squared increases with index upto index 3, then almost stays constant
+* CP gets reduced with index up to 3, then almost stays constant
+* BIC reduces with index up to 3, later increases gradually
+
+Thus,subset with index 3, is the best subset that leads to optimum results. We will use this subset for our linear model.
+
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+# The best model is model with index 3.
+best.subset.summary$outmat[3,]
+```
+
+The best subset contains predictors- Aircraft, speed_air and height.
+
+Before model the building, we try to visualise the relationship among the variables in a 3D graph just to get a sense of the data-
+
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+p <- plot_ly(train, x = ~speed_air, y = ~distance, z = ~height, color = ~aircraft, colors = c('red', 'blue'),alpha=0.5) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Air Speed'),
+                      yaxis = list(title = 'Landing Distance'),
+                      zaxis = list(title = 'Height')))
+p
+```
+
+# Building the model-
+We go ahead with building the model-
+
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+# Building linear regression model
+model<-lm(data=train, distance~speed_air+aircraft+height)
+summary(model)
+```
+
+## Model Diagnostics
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+par(mfrow=c(2,2))
+plot(model)
+par(mfrow=c(1,1))
+infIndexPlot(model, var="cook", main="Index Influence Plot")
+```
+From the graphs we can see that-
+* The residuals are normally distributed (Q-Q plot)
+* The residuals have constant variance
+* There are no obvious high laverage or high influence points
+
+Observation with index 6, has high *Cook's Distance*, 0.11. Let's take a closer look at this observation-
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+# point has high Studentized Residual > 2 but < 3
+a<-as.numeric(train[6,5])
+b<-as.numeric(train[6,8])
+ggplot(data = train,aes(x = speed_air,y = distance,color=aircraft))+geom_point()+geom_smooth(method='lm')+
+  geom_point(aes(x=a,y=b),color='Purple')+annotate("text", x = 125, y = 5400, label = "Possible Outlier",col='Purple')+
+  theme_hc(bgcolor = "darkunica")
+influencePlot(model)
+```
+
+However, the *Studentized Residual* for that observation is less than 3. Thus, we will not consider that point to be an outlier.
+
+## Prediction on the Test data-
+
+Now we try to predict the landing distance of the observations from test data. 
+```{r echo=TRUE, message=FALSE,warning=FALSE,fig.width=10 }
+test$predictedDistance<-predict(model,test)
+cor.test(test$distance,test$predictedDistance)
+ggplot(data = test,aes(distance,y=predictedDistance,color=aircraft))+geom_point()+labs(x='Actual Distance',
+      y='Predicted Distance',title='Prediction Graph')+theme_hc(bgcolor = "darkunica")
+```
+
+We can se that the correlation coefficient between actual landing distance and the predicted landing distance is **0.9891462** with 95% Confidence Interval being **0.9792438, 0.9943379**. The prediction is fairly accurate as it predicts with close to 98% accuracy. 
+
+Thus, we can say that the Liner Regression model does a good job of predicting the landing distance.
